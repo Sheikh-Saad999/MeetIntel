@@ -595,7 +595,7 @@ function PipelineAnalytics({ refreshKey = 0 }) {
 
   const stages = data?.stages || [];
   const hasData = stages.some((s) => s.decisions + s.pending > 0);
-  const maxAvg = Math.max(1, ...stages.map((s) => s.avgHours));
+  const maxAvg = Math.max(0.0001, ...stages.map((s) => s.avgHours)); // scale to the slowest stage, whatever its size
 
   return (
     <Card title="Approval pipeline — time spent at each stage">
