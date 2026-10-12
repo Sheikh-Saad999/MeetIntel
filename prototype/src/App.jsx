@@ -144,6 +144,9 @@ function Dashboard() {
           </ul>
         </Card>
       </div>
+      <div className="mt-4">
+        <PipelineAnalytics />
+      </div>
     </>
   );
 }
@@ -562,20 +565,145 @@ function BusinessModel() {
   );
 }
 
+const fmtHours = (h) => {
+  if (!h || h < 1) return "<1h";
+  if (h < 48) return `${Math.round(h)}h`;
+  return `${(h / 24).toFixed(1)}d`;
+};
+
+const apiError = (data, fallback) =>
+  (typeof data?.error === "string" ? data.error : data?.error?.message) || fallback;
+
+function PipelineAnalytics({ refreshKey = 0 }) {
+  const [data, setData] = useState(null);
+  const [state, setState] = useState("loading"); // loading | ready | error
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/approvals?op=analytics")
+      .then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => ({})) }))
+      .then(({ ok, body }) => {
+        if (!alive) return;
+        if (!ok) throw new Error();
+        setData(body);
+        setState("ready");
+      })
+      .catch(() => alive && setState("error"));
+    return () => { alive = false; };
+  }, [refreshKey]);
+
+  const stages = data?.stages || [];
+  const hasData = stages.some((s) => s.decisions + s.pending > 0);
+  const maxAvg = Math.max(1, ...stages.map((s) => s.avgHours));
+
+  return (
+    <Card title="Approval pipeline — time spent at each stage">
+      {state === "loading" && <p className="text-sm text-slate-400">Loading…</p>}
+      {state === "error" && <p className="text-sm text-slate-400">Pipeline analytics are unavailable right now.</p>}
+      {state === "ready" && !hasData && (
+        <p className="text-sm text-slate-400">No approval activity yet. Timing appears here once items start moving through the approval chain.</p>
+      )}
+      {state === "ready" && hasData && (
+        <>
+          <div className="flex flex-wrap gap-2 mb-4">
+            <Chip tone="slate">{data.totals.items} items</Chip>
+            <Chip tone="gold">{data.totals.pending} pending</Chip>
+            <Chip tone="green">{data.totals.approved} approved</Chip>
+            <Chip tone="red">{data.totals.rejected} rejected</Chip>
+          </div>
+          <div className="space-y-3">
+            {stages.map((s) => {
+              const isBottleneck = data.bottleneck === s.stage;
+              return (
+                <div key={s.stage}>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="font-medium flex items-center gap-2" style={{ color: NAVY }}>
+                      {s.stage}
+                      {isBottleneck && <Chip tone="red">Bottleneck</Chip>}
+                    </span>
+                    <span className="text-slate-400">
+                      avg {fmtHours(s.avgHours)} · {s.decisions} decided · {s.pending} waiting
+                    </span>
+                  </div>
+                  <div className="h-3 rounded-full bg-slate-100 overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${s.decisions + s.pending ? Math.max(4, (s.avgHours / maxAvg) * 100) : 0}%`,
+                        background: isBottleneck ? "#C0392B" : SLATE,
+                        opacity: isBottleneck ? 1 : 0.7,
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-slate-400 mt-3">
+            Average includes decisions already made and the time pending items have waited so far.
+          </p>
+          {data.longestWaiting.length > 0 && (
+            <div className="mt-4 border-t border-slate-100 pt-3">
+              <div className="text-xs font-medium mb-2" style={{ color: NAVY }}>Longest waiting right now</div>
+              <ul className="space-y-1.5">
+                {data.longestWaiting.map((w) => (
+                  <li key={w.id} className="flex justify-between gap-3 text-xs text-slate-600">
+                    <span className="truncate">{w.title || "Untitled item"} <span className="text-slate-400">· at {w.stage}</span></span>
+                    <span className="shrink-0 font-medium">{fmtHours(w.waitingHours)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function StageTracker({ stages, index }) {
+  return (
+    <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+      {stages.map((s, i) => {
+        const done = i < index;
+        const current = i === index;
+        return (
+          <React.Fragment key={s}>
+            <span
+              className="text-[11px] px-2 py-0.5 rounded-full flex items-center gap-1"
+              style={{
+                background: done ? "#E4F2EA" : current ? "#F6EFDC" : "#F1F5F9",
+                color: done ? "#2E7D5B" : current ? "#8A6D1F" : "#94A3B8",
+                fontWeight: current ? 600 : 400,
+              }}
+            >
+              {done && <CheckCircle2 size={10} />}{s}
+            </span>
+            {i < stages.length - 1 && <ChevronRight size={11} className="text-slate-300" />}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
 function Approval() {
   const [items, setItems] = useState([]);
+  const [stages, setStages] = useState(["HOD", "Dean", "VC"]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
-  const [actingOn, setActingOn] = useState(null); // pageId currently being approved/rejected
+  const [actingOn, setActingOn] = useState(null); // pageId currently being decided
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const loadItems = async () => {
     setLoading(true);
     setErrorMsg("");
     try {
-      const res = await fetch("/api/get-pending-agenda-items");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error?.message || "Failed to load agenda items");
+      const res = await fetch("/api/approvals?op=pending");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(apiError(data, "Failed to load agenda items"));
       setItems(data.items || []);
+      if (data.stages) setStages(data.stages);
     } catch (err) {
       setErrorMsg(err.message);
     } finally {
@@ -587,19 +715,22 @@ function Approval() {
     loadItems();
   }, []);
 
-  const act = async (pageId, status) => {
+  const act = async (pageId, action) => {
     setActingOn(pageId);
+    setErrorMsg("");
     try {
-      const res = await fetch("/api/update-agenda-status", {
+      const res = await fetch("/api/approvals?op=decide", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pageId, status }),
+        body: JSON.stringify({ pageId, action }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error?.message || "Failed to update status");
-      setItems(items.filter((i) => i.id !== pageId));
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(apiError(data, "Failed to record the decision"));
+      await loadItems(); // an approved item moves to the next stage, so reload instead of dropping it
+      setRefreshKey((k) => k + 1);
     } catch (err) {
       setErrorMsg(err.message);
+      loadItems();
     } finally {
       setActingOn(null);
     }
@@ -607,11 +738,11 @@ function Approval() {
 
   return (
     <>
-      <SectionHeader eyebrow="Module 03" title="Approval Routing" desc="Agenda items submitted by members, awaiting the chair's decision. Approving or rejecting here updates the record immediately." />
-      <Card title="Pending approvals">
+      <SectionHeader eyebrow="Module 03" title="Approval Routing" desc="Agenda items move through the approval chain stage by stage. Every decision is time-stamped, so the audit trail shows where an item has been waiting." />
+      <Card title="Pending approvals" className="mb-4">
         {loading && <p className="text-sm text-slate-400">Loading pending items…</p>}
         {!loading && errorMsg && (
-          <div className="rounded-lg border p-3 text-xs" style={{ borderColor: "#F3C9C2", background: "#FBE9E7", color: "#B23A2E" }}>
+          <div className="rounded-lg border p-3 text-xs mb-3" style={{ borderColor: "#F3C9C2", background: "#FBE9E7", color: "#B23A2E" }}>
             {errorMsg}
           </div>
         )}
@@ -619,35 +750,44 @@ function Approval() {
           <p className="text-sm text-slate-400">No agenda items are waiting for approval right now.</p>
         )}
         <ul className="divide-y divide-slate-100">
-          {items.map((it) => (
-            <li key={it.id} className="py-4">
-              <div className="font-medium text-sm" style={{ color: NAVY }}>{it.title}</div>
-              <div className="text-xs text-slate-500 mt-0.5">
-                Submitted by {it.submittedBy || "—"} · {it.meeting || "—"}
-              </div>
-              {it.comment && <div className="text-xs text-slate-400 mt-1">"{it.comment}"</div>}
-              <div className="flex gap-2 mt-3">
-                <button
-                  onClick={() => act(it.id, "Approved")}
-                  disabled={actingOn === it.id}
-                  className="text-xs font-medium px-3 py-1.5 rounded-full flex items-center gap-1.5 disabled:opacity-60"
-                  style={{ background: "#E4F2EA", color: "#2E7D5B" }}
-                >
-                  <CheckCircle2 size={13} /> Approve
-                </button>
-                <button
-                  onClick={() => act(it.id, "Rejected")}
-                  disabled={actingOn === it.id}
-                  className="text-xs font-medium px-3 py-1.5 rounded-full flex items-center gap-1.5 disabled:opacity-60"
-                  style={{ background: "#FBE9E7", color: "#B23A2E" }}
-                >
-                  <XCircle size={13} /> Reject
-                </button>
-              </div>
-            </li>
-          ))}
+          {items.map((it) => {
+            const last = it.stageIndex >= stages.length - 1;
+            const next = stages[it.stageIndex + 1];
+            return (
+              <li key={it.id} className="py-4">
+                <div className="font-medium text-sm" style={{ color: NAVY }}>{it.title}</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  Submitted by {it.submittedBy || "—"} · {it.meeting || "—"}
+                </div>
+                {it.comment && <div className="text-xs text-slate-400 mt-1">"{it.comment}"</div>}
+                <StageTracker stages={stages} index={it.stageIndex} />
+                <div className="text-[11px] text-slate-400 mt-1.5">
+                  Waiting {fmtHours(it.waitingHours)} at {it.stage}
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={() => act(it.id, "approve")}
+                    disabled={actingOn === it.id}
+                    className="text-xs font-medium px-3 py-1.5 rounded-full flex items-center gap-1.5 disabled:opacity-60"
+                    style={{ background: "#E4F2EA", color: "#2E7D5B" }}
+                  >
+                    <CheckCircle2 size={13} /> {last ? "Give final approval" : `Approve · send to ${next}`}
+                  </button>
+                  <button
+                    onClick={() => act(it.id, "reject")}
+                    disabled={actingOn === it.id}
+                    className="text-xs font-medium px-3 py-1.5 rounded-full flex items-center gap-1.5 disabled:opacity-60"
+                    style={{ background: "#FBE9E7", color: "#B23A2E" }}
+                  >
+                    <XCircle size={13} /> Reject
+                  </button>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       </Card>
+      <PipelineAnalytics refreshKey={refreshKey} />
     </>
   );
 }
@@ -706,7 +846,10 @@ function VideoTile({ p, big }) {
     if (ref.current) ref.current.srcObject = p.videoTrack ? new MediaStream([p.videoTrack]) : null;
   }, [p.videoTrack]);
   return (
-    <div className={`relative rounded-lg overflow-hidden bg-slate-800 ${big ? "aspect-video" : "aspect-square"}`}>
+    <div
+      className={`relative rounded-lg overflow-hidden bg-slate-800 ${big ? "aspect-video" : "aspect-square"}`}
+      style={p.speaking ? { boxShadow: `0 0 0 3px ${GOLD}` } : undefined}
+    >
       {p.videoTrack ? (
         <video ref={ref} autoPlay playsInline muted={p.local} className="w-full h-full object-cover" />
       ) : (
@@ -1623,22 +1766,108 @@ function ArchiveView() {
 }
 
 function Insights() {
+  const [proposal, setProposal] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const check = async () => {
+    setBusy(true);
+    setError("");
+    setResult(null);
+    try {
+      const res = await fetch("/api/meeting-ai?op=decision-support", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposal }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(data.error || "Check failed."), { detail: data.detail });
+      setResult(data);
+    } catch (err) {
+      setError(err.detail ? `${err.message} (${String(err.detail).slice(0, 180)})` : err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cards = result && [
+    {
+      title: result.conflictFound ? "Conflict with a prior resolution" : "No conflict detected",
+      desc: result.conflictFound
+        ? `${result.conflictSummary}${result.conflictMeeting ? ` (see "${result.conflictMeeting}")` : ""}`
+        : result.note || "This proposal does not contradict any prior resolution on record.",
+      tone: result.conflictFound ? "red" : "green",
+      Icon: result.conflictFound ? Ban : ShieldCheck,
+    },
+    {
+      title: result.recurringTheme ? "Recurring theme" : "No recurring theme found",
+      desc: result.recurringTheme
+        ? `"${result.recurringTheme}" — also present in: ${result.recurringEvidence.join(", ") || "related archive entries"}.`
+        : "This topic doesn't match a pattern across prior archive entries yet.",
+      tone: "gold",
+      Icon: Sparkles,
+    },
+    {
+      title: "Suggested next steps",
+      desc: result.suggestedNextSteps.length ? null : "No specific next step was suggested.",
+      list: result.suggestedNextSteps,
+      tone: "slate",
+      Icon: ClipboardCheck,
+    },
+  ];
+
   return (
     <>
-      <SectionHeader eyebrow="Module 09" title="AI Decision Support" desc="A second AI layer reads across meetings to flag patterns before senior management approves." />
-      <div className="grid md:grid-cols-3 gap-4">
-        {[
-          ["No conflict detected", "This resolution does not contradict any prior BOS decision on record.", "green", ShieldCheck],
-          ["Recurring theme", "Industry-readiness has come up in 4 of the last 6 BOS meetings.", "gold", Sparkles],
-          ["Suggested next step", "Circulate resolution to industry advisory board within 10 days.", "slate", ClipboardCheck],
-        ].map(([t, d, tone, Icon]) => (
-          <Card key={t}>
-            <Icon size={18} style={{ color: tone === "green" ? "#2E7D5B" : tone === "gold" ? GOLD : SLATE }} className="mb-2" />
-            <div className="font-medium text-sm mb-1" style={{ color: NAVY }}>{t}</div>
-            <div className="text-xs text-slate-500 leading-relaxed">{d}</div>
-          </Card>
-        ))}
-      </div>
+      <SectionHeader eyebrow="Module 09" title="AI Decision Support" desc="Checks a proposed decision against the Historical Archive — prior resolutions, conflicts, and recurring themes — before senior management approves." />
+
+      <Card className="mb-4">
+        <label className="text-xs font-medium text-slate-400 block mb-1">Proposed decision or resolution</label>
+        <textarea
+          value={proposal}
+          onChange={(e) => setProposal(e.target.value)}
+          rows={4}
+          placeholder="e.g. Make a 6-week industry internship mandatory for all BBA students starting Fall 2026."
+          className="w-full border rounded-lg px-3 py-2 border-slate-200 outline-none text-sm text-slate-700"
+        />
+        <button
+          onClick={check}
+          disabled={busy || proposal.trim().length < 10}
+          className="mt-3 rounded-lg text-white text-sm py-2.5 px-5 font-medium flex items-center gap-2 disabled:opacity-40"
+          style={{ background: NAVY }}
+        >
+          <Sparkles size={15} /> {busy ? "Checking against the archive…" : "Check against archive"}
+        </button>
+        {error && (
+          <div className="mt-4 rounded-lg px-3 py-2 text-sm flex justify-between gap-3" style={{ background: "#FBE9E7", color: "#B23A2E" }}>
+            <span>{error}</span>
+            <button className="text-xs font-semibold shrink-0" onClick={() => setError("")}>Dismiss</button>
+          </div>
+        )}
+      </Card>
+
+      {result && (
+        <>
+          <p className="text-xs text-slate-400 mb-3">
+            Checked against {result.archiveCount} archive {result.archiveCount === 1 ? "entry" : "entries"}
+            {result.note && !result.conflictFound ? ` — ${result.note}` : ""}
+          </p>
+          <div className="grid md:grid-cols-3 gap-4">
+            {cards.map(({ title, desc, list, tone, Icon }) => (
+              <Card key={title}>
+                <Icon size={18} style={{ color: tone === "green" ? "#2E7D5B" : tone === "red" ? "#B23A2E" : tone === "gold" ? GOLD : SLATE }} className="mb-2" />
+                <div className="font-medium text-sm mb-1" style={{ color: NAVY }}>{title}</div>
+                {desc && <div className="text-xs text-slate-500 leading-relaxed">{desc}</div>}
+                {list && list.length > 0 && (
+                  <ul className="text-xs text-slate-500 leading-relaxed space-y-1 mt-1 list-disc list-inside">
+                    {list.map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                )}
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
     </>
   );
 }

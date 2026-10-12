@@ -59,6 +59,8 @@ export function CaptureProvider({ children }) {
   const roomRef = useRef(null); // the active LiveKit Room, video mode only
   const videoCtxRef = useRef(null); // one shared AudioContext for every participant track
   const trackRecordersRef = useRef(new Map()); // participant identity -> { stop() }
+  const audioElsRef = useRef(new Map()); // participant identity -> hidden <audio> playing their voice
+  const leavingRef = useRef(false);
 
   // Segments are processed one at a time, in order, so speaker labels stay consistent.
   async function transcribeSegment(seg) {
@@ -173,6 +175,15 @@ export function CaptureProvider({ children }) {
   // Daily, doesn't host a ready-made call page of its own).
   const inviteLinkFor = (room) => `${window.location.origin}${window.location.pathname}?join=${room}`;
 
+  function stopAudioEl(identity) {
+    const el = audioElsRef.current.get(identity);
+    if (el) {
+      el.pause();
+      el.srcObject = null;
+      audioElsRef.current.delete(identity);
+    }
+  }
+
   function syncParticipants(room) {
     const local = room.localParticipant;
     const remotes = Array.from(room.remoteParticipants.values());
@@ -182,6 +193,7 @@ export function CaptureProvider({ children }) {
       local: isLocal,
       audioOn: isLocal ? local.isMicrophoneEnabled : Array.from(p.audioTrackPublications.values()).some((t) => !t.isMuted),
       videoOn: isLocal ? local.isCameraEnabled : Array.from(p.videoTrackPublications.values()).some((t) => !t.isMuted),
+      speaking: !!p.isSpeaking,
       videoTrack: (() => {
         const pub = isLocal
           ? Array.from(local.videoTrackPublications.values())[0]
@@ -244,13 +256,27 @@ export function CaptureProvider({ children }) {
 
       room
         .on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
-          if (track.kind === "audio") attach(participant.identity, track.mediaStreamTrack, participant.name || "Guest");
+          if (track.kind === "audio") {
+            // Chrome hands Web Audio pure silence for a remote WebRTC track unless
+            // the track is also playing in a media element. Playing it here also
+            // lets the Chair hear the participant. Must happen before recording starts.
+            const el = new Audio();
+            el.autoplay = true;
+            el.srcObject = new MediaStream([track.mediaStreamTrack]);
+            el.play().catch(() => {});
+            audioElsRef.current.set(participant.identity, el);
+            attach(participant.identity, track.mediaStreamTrack, participant.name || "Guest");
+          }
           syncParticipants(room);
         })
         .on(RoomEvent.TrackUnsubscribed, (track, _pub, participant) => {
-          if (track.kind === "audio") detach(participant.identity);
+          if (track.kind === "audio") {
+            detach(participant.identity);
+            stopAudioEl(participant.identity);
+          }
           syncParticipants(room);
         })
+        .on(RoomEvent.ActiveSpeakersChanged, () => syncParticipants(room))
         .on(RoomEvent.LocalTrackPublished, (pub) => {
           if (pub.kind === "audio" && pub.track) attach("local", pub.track.mediaStreamTrack, name || "Chair");
           syncParticipants(room);
@@ -258,6 +284,7 @@ export function CaptureProvider({ children }) {
         .on(RoomEvent.ParticipantConnected, () => syncParticipants(room))
         .on(RoomEvent.ParticipantDisconnected, (p) => {
           detach(p.identity);
+          stopAudioEl(p.identity);
           syncParticipants(room);
         })
         .on(RoomEvent.Disconnected, () => leaveVideoMeeting());
@@ -302,9 +329,13 @@ export function CaptureProvider({ children }) {
   }
 
   async function leaveVideoMeeting() {
+    // disconnect() fires a Disconnected event that calls this again; run once.
+    if (leavingRef.current) return;
+    leavingRef.current = true;
     clearInterval(timerRef.current);
     trackRecordersRef.current.forEach((r) => r.stop());
     trackRecordersRef.current.clear();
+    Array.from(audioElsRef.current.keys()).forEach(stopAudioEl);
     try {
       await roomRef.current?.disconnect();
     } catch {
@@ -322,6 +353,7 @@ export function CaptureProvider({ children }) {
     setVideoState("idle");
     setStatus("idle");
     setLevel(0);
+    leavingRef.current = false;
   }
 
   function retryFailed() {

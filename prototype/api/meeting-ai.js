@@ -11,6 +11,7 @@
 //   POST /api/meeting-ai?op=minutes     -> transcript/text -> draft minutes + resolution
 //   POST /api/meeting-ai?op=save-minutes -> attach reviewed minutes to a meeting
 //   POST /api/meeting-ai?op=livekit-token  -> mint a LiveKit token to join a video room
+//   POST /api/meeting-ai?op=decision-support -> check a proposal against the Historical Archive
 
 import transcribe from "../server/meeting-ai/transcribe.js";
 import meetings from "../server/meeting-ai/meetings.js";
@@ -19,10 +20,11 @@ import minutes from "../server/meeting-ai/minutes.js";
 import saveMinutes from "../server/meeting-ai/save-minutes.js";
 import livekitToken from "../server/meeting-ai/livekit-token.js";
 import livekitDebug from "../server/meeting-ai/livekit-debug.js";
+import decisionSupport from "../server/meeting-ai/decision-support.js";
 
 export const config = { maxDuration: 60 };
 
-const OPS = { transcribe, meetings, save, minutes, "save-minutes": saveMinutes, "livekit-token": livekitToken, "livekit-debug": livekitDebug };
+const OPS = { transcribe, meetings, save, minutes, "save-minutes": saveMinutes, "livekit-token": livekitToken, "livekit-debug": livekitDebug, "decision-support": decisionSupport };
 
 export default async function handler(req, res) {
   const op = req.query?.op;
