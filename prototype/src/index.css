@@ -7,3 +7,34 @@ body {
 .font-serif {
   font-family: "Fraunces", ui-serif, Georgia, serif;
 }
+
+/* Make every button feel clickable: pointer cursor, hover/press feedback,
+   keyboard focus ring. (Tailwind v4 resets buttons to the default cursor.) */
+button,
+[role="button"],
+select {
+  cursor: pointer;
+}
+
+button {
+  transition: filter 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+button:not(:disabled):hover {
+  filter: brightness(0.92);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+button:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+button:focus-visible,
+select:focus-visible {
+  outline: 2px solid #fab717;
+  outline-offset: 2px;
+}

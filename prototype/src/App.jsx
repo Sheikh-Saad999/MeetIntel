@@ -566,7 +566,8 @@ function BusinessModel() {
 }
 
 const fmtHours = (h) => {
-  if (!h || h < 1) return "<1h";
+  if (!h || h < 1 / 60) return "<1m";
+  if (h < 1) return `${Math.round(h * 60)}m`;
   if (h < 48) return `${Math.round(h)}h`;
   return `${(h / 24).toFixed(1)}d`;
 };
@@ -622,7 +623,9 @@ function PipelineAnalytics({ refreshKey = 0 }) {
                       {isBottleneck && <Chip tone="red">Bottleneck</Chip>}
                     </span>
                     <span className="text-slate-400">
-                      avg {fmtHours(s.avgHours)} · {s.decisions} decided · {s.pending} waiting
+                      {s.decisions + s.pending === 0
+                        ? "no data yet"
+                        : `avg ${fmtHours(s.avgHours)} · ${s.decisions} decided · ${s.pending} waiting`}
                     </span>
                   </div>
                   <div className="h-3 rounded-full bg-slate-100 overflow-hidden">

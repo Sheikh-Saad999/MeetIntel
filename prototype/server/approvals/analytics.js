@@ -6,7 +6,8 @@
 
 import { getSchema, queryAll, readText, parseLog, currentStage, normalize, LOG_PROPERTY, STAGES } from "./shared.js";
 
-const round1 = (n) => Math.round(n * 10) / 10;
+const round1 = (n) => Math.round(n * 100) / 100;
+const MIN_BOTTLENECK_HOURS = 5 / 60; // below 5 minutes on average, no stage is flagged
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
@@ -66,7 +67,10 @@ export default async function handler(req, res) {
     });
 
     const withData = stages.filter((s) => s.decisions + s.pending > 0);
-    const bottleneck = withData.length ? withData.reduce((a, b) => (b.avgHours > a.avgHours ? b : a)).stage : null;
+    // The bottleneck is the slowest stage, but only when stages can be compared
+    // and the gap isn't just seconds of noise (see MIN_BOTTLENECK_HOURS).
+    const slowest = withData.length >= 2 ? withData.reduce((a, b) => (b.avgHours > a.avgHours ? b : a)) : null;
+    const bottleneck = slowest && slowest.avgHours >= MIN_BOTTLENECK_HOURS ? slowest.stage : null;
 
     return res.status(200).json({
       totals: { items: pages.length, approved, rejected, pending: pendingList.length },
