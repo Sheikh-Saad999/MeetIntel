@@ -60,25 +60,33 @@ export default async function handler(req, res) {
       };
     }
 
-    const notionRes = await fetch(
-      `https://api.notion.com/v1/databases/${ARCHIVE_DB_ID}/query`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Notion-Version": "2022-06-28",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
+    // Load up to 300 entries (Notion returns at most 100 per request) so the
+    // search box can suggest matches from the whole archive, not just 50.
+    body.page_size = 100;
+    const all = [];
+    let cursor;
+    do {
+      const notionRes = await fetch(
+        `https://api.notion.com/v1/databases/${ARCHIVE_DB_ID}/query`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Notion-Version": "2022-06-28",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ...body, ...(cursor ? { start_cursor: cursor } : {}) }),
+        }
+      );
+      const data = await notionRes.json();
+      if (!notionRes.ok) {
+        return res.status(notionRes.status).json({ error: data });
       }
-    );
+      all.push(...(data.results || []));
+      cursor = data.has_more && all.length < 300 ? data.next_cursor : null;
+    } while (cursor);
 
-    const data = await notionRes.json();
-    if (!notionRes.ok) {
-      return res.status(notionRes.status).json({ error: data });
-    }
-
-    const items = (data.results || []).map((page) => ({
+    const items = all.map((page) => ({
       id: page.id,
       meeting: titleKey ? readText(page.properties[titleKey]) : "",
       date: dateKey ? readText(page.properties[dateKey]) : "",

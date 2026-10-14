@@ -1648,31 +1648,87 @@ function FollowUp() {
   );
 }
 
+// ---- Live archive search ----
+// Every typed word must appear somewhere in an entry (any order, partial words
+// are fine), so "mandatory intern" finds "internship made mandatory". This
+// matches WORDS, not meaning: a synonym like "work placement" won't find
+// "internship" (that would need AI-based search).
+const searchTokens = (q) => String(q || "").toLowerCase().split(/\s+/).filter(Boolean);
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function matchEntries(entries, q) {
+  const tokens = searchTokens(q);
+  if (!tokens.length) return entries;
+  return entries.filter((e) => {
+    const hay = `${e.meeting} ${e.date} ${e.resolution}`.toLowerCase();
+    return tokens.every((t) => hay.includes(t));
+  });
+}
+
+function Highlight({ text, q }) {
+  const tokens = searchTokens(q);
+  if (!tokens.length) return <>{text}</>;
+  const re = new RegExp(`(${tokens.map(escapeRegExp).join("|")})`, "gi");
+  return (
+    <>
+      {String(text).split(re).map((part, i) =>
+        i % 2 ? <mark key={i} style={{ background: "#F6E3A1", color: "inherit", borderRadius: 2 }}>{part}</mark> : part
+      )}
+    </>
+  );
+}
+
+function useArchiveEntries() {
+  const [entries, setEntries] = useState([]);
+  const [state, setState] = useState("loading"); // loading | ready | error
+  const load = async () => {
+    try {
+      const res = await fetch("/api/search-archive?q=");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error();
+      // hide completely blank rows
+      setEntries((data.items || []).filter((e) => (e.meeting || "").trim() || (e.resolution || "").trim()));
+      setState("ready");
+    } catch {
+      setState("error");
+    }
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  return { entries, state, reload: load };
+}
+
+function SuggestionRow({ entry, q, onPick }) {
+  return (
+    <button
+      type="button"
+      onMouseDown={(e) => { e.preventDefault(); onPick?.(entry); }}
+      className="w-full text-left px-4 py-2.5 hover:bg-slate-50 border-t border-slate-100 first:border-t-0"
+    >
+      <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+        <Building2 size={11} /> <Highlight text={entry.meeting || "Untitled meeting"} q={q} /> · {entry.date || "no date"}
+      </div>
+      <div className="text-xs text-slate-700 mt-0.5 line-clamp-2"><Highlight text={entry.resolution} q={q} /></div>
+    </button>
+  );
+}
+
 function ArchiveView() {
+  const { entries, state: loadState, reload } = useArchiveEntries();
   const [q, setQ] = useState("");
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
+  const [applied, setApplied] = useState(null); // null = no search run yet, otherwise the query being shown
+  const [focused, setFocused] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [form, setForm] = useState({ meeting: "", date: "", resolution: "" });
   const [saving, setSaving] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
 
-  const runSearch = async () => {
-    setLoading(true);
-    setErrorMsg("");
-    setSearched(true);
-    try {
-      const res = await fetch(`/api/search-archive?q=${encodeURIComponent(q)}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error?.message || "Search failed");
-      setItems(data.items || []);
-    } catch (err) {
-      setErrorMsg(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const runSearch = () => setApplied(q);
+  const items = applied === null ? [] : matchEntries(entries, applied);
+  const suggestions = focused && q.trim().length >= 2 ? matchEntries(entries, q).slice(0, 5) : [];
+  const loading = loadState === "loading";
+  const searched = applied !== null;
 
   const update = (field) => (e) => setForm({ ...form, [field]: e.target.value });
 
@@ -1693,7 +1749,9 @@ function ArchiveView() {
       if (!res.ok) throw new Error(data?.error?.message || "Failed to add entry");
       setForm({ meeting: "", date: "", resolution: "" });
       setShowAdd(false);
-      runSearch();
+      await reload();
+      setQ("");
+      setApplied("");
     } catch (err) {
       setErrorMsg(err.message);
     } finally {
@@ -1703,20 +1761,38 @@ function ArchiveView() {
 
   return (
     <>
-      <SectionHeader eyebrow="Module 08" title="Searchable Historical Archive" desc="Ask a plain question years later — the matching meeting, date, and resolution comes back instantly." />
+      <SectionHeader eyebrow="Module 08" title="Searchable Historical Archive" desc="Type any word — suggestions appear as you type, showing which meeting and resolution used it. Press Enter to see every match." />
       <Card>
-        <div className="flex items-center gap-2 border rounded-full px-4 py-2.5 border-slate-200 mb-3">
-          <Search size={16} className="text-slate-400" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && runSearch()}
-            placeholder="e.g. internship mandatory"
-            className="flex-1 text-sm outline-none"
-          />
-          <button onClick={runSearch} className="text-xs font-medium px-3 py-1.5 rounded-full text-white" style={{ background: NAVY }}>
-            Search
-          </button>
+        <div className="relative mb-3">
+          <div className="flex items-center gap-2 border rounded-full px-4 py-2.5 border-slate-200">
+            <Search size={16} className="text-slate-400" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { runSearch(); setFocused(false); }
+                if (e.key === "Escape") setFocused(false);
+              }}
+              placeholder="Type a word, e.g. internship"
+              className="flex-1 text-sm outline-none"
+            />
+            <button onClick={() => { runSearch(); setFocused(false); }} className="text-xs font-medium px-3 py-1.5 rounded-full text-white" style={{ background: NAVY }}>
+              Search
+            </button>
+          </div>
+          {focused && q.trim().length >= 2 && (
+            <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+              {suggestions.length > 0 ? (
+                suggestions.map((s) => (
+                  <SuggestionRow key={s.id} entry={s} q={q} onPick={() => { setApplied(q); setFocused(false); }} />
+                ))
+              ) : (
+                <div className="px-4 py-3 text-xs text-slate-400">No past resolution mentions "{q.trim()}".</div>
+              )}
+            </div>
+          )}
         </div>
 
         {loading && <p className="text-sm text-slate-400">Searching…</p>}
@@ -1731,9 +1807,9 @@ function ArchiveView() {
           {items.map((it) => (
             <div key={it.id} className="rounded-lg border border-slate-200 p-4">
               <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
-                <Building2 size={13} /> {it.meeting} · {it.date}
+                <Building2 size={13} /> <Highlight text={it.meeting} q={applied} /> · {it.date}
               </div>
-              <p className="text-sm text-slate-700">{it.resolution}</p>
+              <p className="text-sm text-slate-700"><Highlight text={it.resolution} q={applied} /></p>
             </div>
           ))}
         </div>
@@ -1768,7 +1844,11 @@ function ArchiveView() {
   );
 }
 
+const SUGGEST_SKIP = new Set(["the", "and", "for", "are", "all", "with", "that", "this", "from", "will", "have", "make", "again", "should", "must"]);
+
 function Insights() {
+  const { entries: archiveEntries } = useArchiveEntries();
+  const [typing, setTyping] = useState(false);
   const [proposal, setProposal] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1793,6 +1873,11 @@ function Insights() {
       setBusy(false);
     }
   };
+
+  // Live hint while typing: past resolutions that contain the word being typed.
+  const lastWord = (proposal.match(/[A-Za-z\u0600-\u06FF]{3,}$/) || [""])[0].toLowerCase();
+  const hints =
+    typing && lastWord && !SUGGEST_SKIP.has(lastWord) ? matchEntries(archiveEntries, lastWord).slice(0, 4) : [];
 
   const cards = result && [
     {
@@ -1829,10 +1914,20 @@ function Insights() {
         <textarea
           value={proposal}
           onChange={(e) => setProposal(e.target.value)}
+          onFocus={() => setTyping(true)}
+          onBlur={() => setTyping(false)}
           rows={4}
           placeholder="e.g. Make a 6-week industry internship mandatory for all BBA students starting Fall 2026."
           className="w-full border rounded-lg px-3 py-2 border-slate-200 outline-none text-sm text-slate-700"
         />
+        {hints.length > 0 && (
+          <div className="mt-2 border border-slate-200 rounded-xl overflow-hidden bg-white">
+            <div className="px-4 py-2 text-[11px] text-slate-400 bg-slate-50">
+              "{lastWord}" was used in these past resolutions:
+            </div>
+            {hints.map((h) => <SuggestionRow key={h.id} entry={h} q={lastWord} />)}
+          </div>
+        )}
         <button
           onClick={check}
           disabled={busy || proposal.trim().length < 10}
