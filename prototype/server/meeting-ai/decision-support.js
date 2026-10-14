@@ -128,13 +128,21 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: "The response could not be read." });
     }
 
+    // Don't trust the model to follow its own rules: check its claims against the archive.
+    const known = new Map(archive.map((e) => [normalize(e.meeting), e.meeting]));
+    const matchMeeting = (name) => known.get(normalize(name));
+
+    // A "recurring" theme needs 2+ distinct, real archive meetings behind it.
+    const evidence = [...new Set(strList(parsed.recurring_evidence).map(matchMeeting).filter(Boolean))];
+    const recurring = evidence.length >= 2;
+
     return res.status(200).json({
       archiveCount: archive.length,
       conflictFound: !!parsed.conflict_found,
       conflictSummary: str(parsed.conflict_summary),
-      conflictMeeting: str(parsed.conflict_meeting),
-      recurringTheme: str(parsed.recurring_theme),
-      recurringEvidence: strList(parsed.recurring_evidence),
+      conflictMeeting: matchMeeting(parsed.conflict_meeting) || "", // drop a meeting name that isn't in the archive
+      recurringTheme: recurring ? str(parsed.recurring_theme) : "",
+      recurringEvidence: recurring ? evidence : [],
       suggestedNextSteps: strList(parsed.suggested_next_steps),
       note: str(parsed.note),
     });
