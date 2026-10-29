@@ -16,6 +16,7 @@
     "vite": "^8.1.1"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
     "livekit-client": "^2.22.3",
     "livekit-server-sdk": "^2.19.1",
     "lucide-react": "^1.27.0",

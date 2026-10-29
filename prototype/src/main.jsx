@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App.jsx'
+import SaaSRoot from './saas/SaaSRoot.jsx'
 import JoinMeeting from './JoinMeeting.jsx'
 import './index.css'
 
@@ -10,6 +10,6 @@ const joinRoom = new URLSearchParams(window.location.search).get('join')
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    {joinRoom ? <JoinMeeting room={joinRoom} /> : <App />}
+    {joinRoom ? <JoinMeeting room={joinRoom} /> : <SaaSRoot />}
   </React.StrictMode>,
 )
