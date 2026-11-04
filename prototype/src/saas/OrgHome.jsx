@@ -34,6 +34,12 @@ export default function OrgHome({ membership, onChange, onSignOut, onOpenDemo })
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    if (!msg) return;
+    const t = setTimeout(() => setMsg(""), 4000);
+    return () => clearTimeout(t);
+  }, [msg]);
+
   const plan = plans.find((p) => p.id === org.plan_id);
   const maxDepts = plan?.max_departments ?? null;
 
@@ -89,6 +95,10 @@ export default function OrgHome({ membership, onChange, onSignOut, onOpenDemo })
     await onChange();
   }, "Plan changed (simulated payment).");
 
+  const profileDirty =
+    profile.name.trim() !== org.name || (profile.website.trim() || "") !== (org.website || "") ||
+    (profile.phone.trim() || "") !== (org.phone || "") || (profile.address.trim() || "") !== (org.address || "") ||
+    (profile.description.trim() || "") !== (org.description || "") || (profile.employee_range || "") !== (org.employee_range || "");
   const dirty = JSON.stringify(draft) !== JSON.stringify(depts);
   const atLimit = maxDepts != null && draft.length >= maxDepts;
   const addDept = () => {
@@ -113,10 +123,16 @@ export default function OrgHome({ membership, onChange, onSignOut, onOpenDemo })
       </header>
 
       <main className="max-w-5xl mx-auto px-5 py-6 grid md:grid-cols-2 gap-4">
-        <div className="md:col-span-2">
-          <ErrorBox onDismiss={() => setError("")}>{error}</ErrorBox>
-          {msg && <div className="rounded-lg px-3 py-2 text-sm" style={{ background: "#E4F2EA", color: "#2E7D5B" }}>{msg}</div>}
-        </div>
+        {(msg || error) && (
+          <div
+            role="status"
+            className="fixed top-4 right-4 z-50 max-w-sm rounded-lg px-4 py-3 text-sm shadow-lg flex items-start gap-3"
+            style={error ? { background: "#FBE9E7", color: "#B23A2E" } : { background: "#E4F2EA", color: "#2E7D5B" }}
+          >
+            <span className="flex-1">{error || msg}</span>
+            <button className="text-xs font-semibold" onClick={() => { setMsg(""); setError(""); }}>✕</button>
+          </div>
+        )}
 
         <Card title="Plan and usage">
           <div className="text-sm text-slate-600 space-y-1 mb-4">
@@ -168,7 +184,7 @@ export default function OrgHome({ membership, onChange, onSignOut, onOpenDemo })
           <Field label="About"><textarea className={inputCls} rows={2} value={profile.description} disabled={!isAdmin} onChange={(e) => setProfile({ ...profile, description: e.target.value })} /></Field>
           {isAdmin && (
             <div className="flex flex-wrap items-center gap-3">
-              <Button onClick={saveProfile} disabled={busy || profile.name.trim().length < 2}>Save profile</Button>
+              <Button onClick={saveProfile} disabled={busy || !profileDirty || profile.name.trim().length < 2}>{profileDirty ? "Save profile" : "Profile saved"}</Button>
               <label className="text-xs text-slate-500">
                 Change logo: <input type="file" accept="image/png,image/jpeg,image/webp" className="text-xs" onChange={(e) => e.target.files?.[0] && changeLogo(e.target.files[0])} />
               </label>

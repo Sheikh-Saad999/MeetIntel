@@ -205,6 +205,11 @@ insert into storage.buckets (id, name, public) values ('logos', 'logos', true) o
 drop policy if exists logos_insert on storage.objects;
 create policy logos_insert on storage.objects for insert to authenticated
   with check (bucket_id = 'logos' and public.is_admin_of_path_org(name));
+-- The storage API reads the row back after writing it (INSERT ... RETURNING / upsert), so a SELECT
+-- policy is required too. Scoped to the org's own folder; public URLs still serve logos to everyone.
+drop policy if exists logos_select on storage.objects;
+create policy logos_select on storage.objects for select to authenticated
+  using (bucket_id = 'logos' and public.is_admin_of_path_org(name));
 drop policy if exists logos_update on storage.objects;
 create policy logos_update on storage.objects for update to authenticated
   using (bucket_id = 'logos' and public.is_admin_of_path_org(name))
