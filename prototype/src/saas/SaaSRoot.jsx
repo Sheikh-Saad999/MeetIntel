@@ -3,7 +3,7 @@ import App from "../App.jsx";
 import { supabase, supabaseConfigured } from "./supabase.js";
 import Auth from "./Auth.jsx";
 import Onboarding from "./Onboarding.jsx";
-import OrgHome from "./OrgHome.jsx";
+import Workspace from "./Workspace.jsx";
 import { Splash, Button } from "./ui.jsx";
 
 // Entry point for signed-in users:
@@ -17,7 +17,20 @@ export default function SaaSRoot() {
   return <Gate />;
 }
 
+const INVITE_KEY = "meetintel_invite";
+
+// An invite link looks like /?invite=CODE. Keep the code through signup (and tidy the address bar).
+function rememberInviteFromUrl() {
+  const code = new URLSearchParams(window.location.search).get("invite");
+  if (!code) return;
+  sessionStorage.setItem(INVITE_KEY, code.trim().toUpperCase());
+  const url = new URL(window.location.href);
+  url.searchParams.delete("invite");
+  window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+}
+
 function Gate() {
+  useState(rememberInviteFromUrl);
   const [session, setSession] = useState(undefined); // undefined = still checking
   const [membership, setMembership] = useState(undefined); // undefined = loading, null = no company yet
   const [loadError, setLoadError] = useState("");
@@ -33,7 +46,7 @@ function Gate() {
     setLoadError("");
     const { data, error } = await supabase
       .from("memberships")
-      .select("role, organizations(*)")
+      .select("role, approval_stage, email, organizations(*)")
       .eq("user_id", uid);
     if (error) return setLoadError("Could not load your workspace. Please try again.");
     setMembership(data && data.length ? data[0] : null);
@@ -49,10 +62,10 @@ function Gate() {
   const signOut = () => supabase.auth.signOut();
 
   if (session === undefined) return <Splash>Loading…</Splash>;
-  if (!session) return <Auth />;
+  if (!session) return <Auth invited={!!sessionStorage.getItem(INVITE_KEY)} />;
   if (loadError) return <Splash><div className="text-center"><p className="mb-3">{loadError}</p><Button onClick={() => loadMembership(uid)}>Try again</Button></div></Splash>;
   if (membership === undefined) return <Splash>Loading your workspace…</Splash>;
-  if (membership === null) return <Onboarding onDone={() => loadMembership(uid)} onSignOut={signOut} />;
+  if (membership === null) return <Onboarding inviteCode={sessionStorage.getItem(INVITE_KEY) || ""} onDone={() => { sessionStorage.removeItem(INVITE_KEY); return loadMembership(uid); }} onSignOut={signOut} />;
 
   if (showDemo && membership.organizations.legacy_demo) {
     return (
@@ -70,8 +83,9 @@ function Gate() {
   }
 
   return (
-    <OrgHome
+    <Workspace
       membership={membership}
+      userId={uid}
       onChange={() => loadMembership(uid)}
       onSignOut={signOut}
       onOpenDemo={() => setShowDemo(true)}

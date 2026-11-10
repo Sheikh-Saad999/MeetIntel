@@ -9,7 +9,7 @@ const POINTS = [
   "Set up for your own sector, departments and branding",
 ];
 
-export default function Auth() {
+export default function Auth({ invited = false }) {
   const [mode, setMode] = useState("signup"); // signup | login
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -61,6 +61,7 @@ export default function Auth() {
           <p className="text-xs text-slate-400 mb-5">
             {mode === "signup" ? "You will set up your company in the next step." : "Log in to your workspace."}
           </p>
+          {invited && <div className="rounded-lg px-3 py-2 text-xs mb-3" style={{ background: "#F6EFDC", color: "#8A6D1F" }}>You have been invited to join a company. Create your account (or log in) to continue.</div>}
           <ErrorBox onDismiss={() => setError("")}>{error}</ErrorBox>
           {notice && <div className="rounded-lg px-3 py-2 text-sm mb-3" style={{ background: "#E4F2EA", color: "#2E7D5B" }}>{notice}</div>}
           <Field label="Work email">

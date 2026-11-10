@@ -5,7 +5,11 @@ import { NAVY, Field, Button, ErrorBox, inputCls, Splash, limitText } from "./ui
 const STEPS = ["Company", "Details & logo", "Plan", "Departments"];
 const SIZES = ["1-10", "11-50", "51-200", "201-1000", "1000+"];
 
-export default function Onboarding({ onDone, onSignOut }) {
+export default function Onboarding({ onDone, onSignOut, inviteCode = "" }) {
+  const [joinMode, setJoinMode] = useState(!!inviteCode);
+  const [code, setCode] = useState(inviteCode);
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState("");
   const [sectors, setSectors] = useState(null);
   const [plans, setPlans] = useState(null);
   const [loadError, setLoadError] = useState("");
@@ -69,6 +73,15 @@ export default function Onboarding({ onDone, onSignOut }) {
     setNewDept("");
   };
 
+  const join = async () => {
+    setJoining(true);
+    setJoinError("");
+    const { error: err } = await supabase.rpc("join_organization", { p_code: code.trim() });
+    setJoining(false);
+    if (err) return setJoinError(err.message);
+    await onDone();
+  };
+
   const finish = async () => {
     setBusy(true);
     setError("");
@@ -100,6 +113,22 @@ export default function Onboarding({ onDone, onSignOut }) {
     }
   };
 
+  if (joinMode) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "#FBF7F2" }}>
+        <div className="bg-white rounded-2xl shadow-sm p-8 w-full max-w-sm">
+          <h1 className="text-xl font-serif mb-1" style={{ color: NAVY }}>Join your company</h1>
+          <p className="text-xs text-slate-400 mb-5">Enter the invite code you were given.</p>
+          <ErrorBox onDismiss={() => setJoinError("")}>{joinError}</ErrorBox>
+          <Field label="Invite code"><input className={inputCls} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="e.g. 3F9A1C7D20BE" /></Field>
+          <Button className="w-full" onClick={join} disabled={joining || code.trim().length < 6}>{joining ? "Joining…" : "Join company"}</Button>
+          <button className="text-xs mt-4 block mx-auto text-slate-500 underline" onClick={() => setJoinMode(false)}>Create a new company instead</button>
+          <button className="text-xs mt-2 block mx-auto text-slate-400 underline" onClick={onSignOut}>Sign out</button>
+        </div>
+      </div>
+    );
+  }
+
   if (loadError) return <Splash>{loadError}</Splash>;
   if (!sectors || !plans) return <Splash>Loading…</Splash>;
 
@@ -110,7 +139,10 @@ export default function Onboarding({ onDone, onSignOut }) {
       <div className="max-w-2xl mx-auto">
         <div className="flex justify-between items-center mb-6">
           <div className="text-xl font-serif" style={{ color: NAVY }}>Set up your workspace</div>
-          <button className="text-xs text-slate-500 underline" onClick={onSignOut}>Sign out</button>
+          <div className="flex gap-4">
+            <button className="text-xs text-slate-500 underline" onClick={() => setJoinMode(true)}>I have an invite code</button>
+            <button className="text-xs text-slate-500 underline" onClick={onSignOut}>Sign out</button>
+          </div>
         </div>
 
         <ol className="flex gap-2 mb-6 text-xs">

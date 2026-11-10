@@ -64,3 +64,93 @@ export function OrgAvatar({ org, size = 40 }) {
 }
 
 export const limitText = (n) => (n == null ? "Unlimited" : String(n));
+
+export function Card({ title, children, className = "", action }) {
+  return (
+    <section className={`bg-white rounded-2xl shadow-sm p-5 ${className}`}>
+      {(title || action) && (
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-serif text-base" style={{ color: NAVY }}>{title}</h2>
+          {action}
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
+const CHIP_TONES = {
+  slate: ["#F1F5F9", "#64748B"], gold: ["#F6EFDC", "#8A6D1F"], green: ["#E4F2EA", "#2E7D5B"],
+  red: ["#FBE9E7", "#B23A2E"], brand: ["#F9EDEE", NAVY],
+};
+export function Chip({ tone = "slate", children }) {
+  const [bg, fg] = CHIP_TONES[tone] || CHIP_TONES.slate;
+  return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap" style={{ background: bg, color: fg }}>{children}</span>;
+}
+
+// ---- Toast: success messages fade by themselves; errors stay until dismissed ----
+const ToastCtx = React.createContext({ notify: () => {}, fail: () => {} });
+export const useToast = () => React.useContext(ToastCtx);
+
+export function ToastProvider({ children }) {
+  const [t, setT] = React.useState(null);
+  React.useEffect(() => {
+    if (!t || t.kind === "error") return;
+    const id = setTimeout(() => setT(null), 4000);
+    return () => clearTimeout(id);
+  }, [t]);
+  const value = React.useMemo(
+    () => ({
+      notify: (text) => setT({ kind: "ok", text }),
+      fail: (e) => setT({ kind: "error", text: typeof e === "string" ? e : e?.message || "Something went wrong." }),
+    }),
+    []
+  );
+  return (
+    <ToastCtx.Provider value={value}>
+      {children}
+      {t && (
+        <div
+          role="status"
+          className="fixed top-4 right-4 z-50 max-w-sm rounded-lg px-4 py-3 text-sm shadow-lg flex items-start gap-3"
+          style={t.kind === "error" ? { background: "#FBE9E7", color: "#B23A2E" } : { background: "#E4F2EA", color: "#2E7D5B" }}
+        >
+          <span className="flex-1">{t.text}</span>
+          <button className="text-xs font-semibold" onClick={() => setT(null)}>✕</button>
+        </div>
+      )}
+    </ToastCtx.Provider>
+  );
+}
+
+// approved = how many stages have approved so far; status = pending | approved | rejected
+export function StageTracker({ stages, approved, status }) {
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {stages.map((name, i) => {
+        const done = status === "approved" || i < approved;
+        const rejected = status === "rejected" && i === approved;
+        const current = status === "pending" && i === approved;
+        const [bg, fg] = rejected ? CHIP_TONES.red : done ? CHIP_TONES.green : current ? CHIP_TONES.gold : CHIP_TONES.slate;
+        return (
+          <React.Fragment key={i}>
+            <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: bg, color: fg, fontWeight: current ? 600 : 400, opacity: !done && !current && !rejected ? 0.7 : 1 }}>
+              {done ? "✓ " : rejected ? "✕ " : ""}{name}
+            </span>
+            {i < stages.length - 1 && <span className="text-slate-300 text-xs">›</span>}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+export const fmtDateTime = (iso) =>
+  iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+
+export function fmtDuration(h) {
+  if (!h || h < 1 / 60) return "<1m";
+  if (h < 1) return `${Math.round(h * 60)}m`;
+  if (h < 48) return `${Math.round(h)}h`;
+  return `${(h / 24).toFixed(1)}d`;
+}
