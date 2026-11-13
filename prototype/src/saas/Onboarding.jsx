@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase, uploadLogo, checkLogo } from "./supabase.js";
 import { NAVY, Field, Button, ErrorBox, inputCls, Splash, limitText } from "./ui.jsx";
 
@@ -22,8 +22,10 @@ export default function Onboarding({ onDone, onSignOut, inviteCode = "" }) {
   const [logo, setLogo] = useState(null);
   const [logoError, setLogoError] = useState("");
   const [planId, setPlanId] = useState("free");
-  const [departments, setDepartments] = useState([]);
+  const [departments, setDepartments] = useState([]); // rows are { k, name }; k is a stable key (never derived from the text)
   const [newDept, setNewDept] = useState("");
+  const rowKey = useRef(0);
+  const makeRow = (name) => ({ k: ++rowKey.current, name });
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -54,7 +56,7 @@ export default function Onboarding({ onDone, onSignOut, inviteCode = "" }) {
 
   const goToDepartments = () => {
     // first visit: start from the sector's suggested departments; later visits: just respect the plan limit
-    const base = departments.length ? departments : sector?.default_departments || [];
+    const base = departments.length ? departments : (sector?.default_departments || []).map(makeRow);
     setDepartments(maxDepts == null ? base : base.slice(0, maxDepts));
     setStep(3);
   };
@@ -67,9 +69,9 @@ export default function Onboarding({ onDone, onSignOut, inviteCode = "" }) {
 
   const addDept = () => {
     const n = newDept.trim();
-    if (!n || departments.some((d) => d.toLowerCase() === n.toLowerCase())) return;
+    if (!n || departments.some((d) => d.name.trim().toLowerCase() === n.toLowerCase())) return;
     if (maxDepts != null && departments.length >= maxDepts) return;
-    setDepartments([...departments, n]);
+    setDepartments([...departments, makeRow(n)]);
     setNewDept("");
   };
 
@@ -103,7 +105,7 @@ export default function Onboarding({ onDone, onSignOut, inviteCode = "" }) {
         if (err) throw err;
         setLogoDone(true);
       }
-      const { error: derr } = await supabase.rpc("save_departments", { p_org: org.id, p_names: departments });
+      const { error: derr } = await supabase.rpc("save_departments", { p_org: org.id, p_names: departments.map((d) => d.name) });
       if (derr) throw derr;
       await onDone();
     } catch (err) {
@@ -132,7 +134,7 @@ export default function Onboarding({ onDone, onSignOut, inviteCode = "" }) {
   if (loadError) return <Splash>{loadError}</Splash>;
   if (!sectors || !plans) return <Splash>Loading…</Splash>;
 
-  const canNext = [name.trim().length >= 2 && sectorId, true, !!plan, departments.length > 0][step];
+  const canNext = [name.trim().length >= 2 && sectorId, true, !!plan, departments.some((d) => d.name.trim())][step];
 
   return (
     <div className="min-h-screen px-4 py-10" style={{ background: "#FBF7F2" }}>
@@ -235,10 +237,10 @@ export default function Onboarding({ onDone, onSignOut, inviteCode = "" }) {
                 <span>{departments.length} / {limitText(maxDepts)} on the {plan.name} plan</span>
               </div>
               <ul className="space-y-1.5 mb-3">
-                {departments.map((d, i) => (
-                  <li key={d + i} className="flex items-center gap-2">
-                    <input className={inputCls} value={d} onChange={(e) => setDepartments(departments.map((x, j) => (j === i ? e.target.value : x)))} />
-                    <button type="button" className="text-xs text-slate-400 px-2" onClick={() => setDepartments(departments.filter((_, j) => j !== i))}>Remove</button>
+                {departments.map((d) => (
+                  <li key={d.k} className="flex items-center gap-2">
+                    <input className={inputCls} value={d.name} onChange={(e) => setDepartments(departments.map((x) => (x.k === d.k ? { ...x, name: e.target.value } : x)))} />
+                    <button type="button" className="text-xs text-slate-400 px-2" onClick={() => setDepartments(departments.filter((x) => x.k !== d.k))}>Remove</button>
                   </li>
                 ))}
               </ul>

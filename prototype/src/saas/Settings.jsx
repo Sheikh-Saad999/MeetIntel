@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase, uploadLogo, checkLogo } from "./supabase.js";
 import { useWorkspace } from "./context.jsx";
 import { Card, Button, Field, inputCls, useToast, NAVY, limitText } from "./ui.jsx";
@@ -10,19 +10,29 @@ export default function Settings() {
   const { notify, fail } = useToast();
   const [busy, setBusy] = useState(false);
 
+  // Draft rows carry a stable `key` (never derived from the text being typed), so the input keeps
+  // focus while typing. Drafts are reset only when the saved data really changed, so saving one
+  // section does not wipe unsaved edits in another.
+  const counter = useRef(0);
+  const newKey = () => `new-${++counter.current}`;
+
   // ----- departments (each row keeps its id, so renaming does not unlink meetings) -----
-  const [dDraft, setDDraft] = useState(departments);
+  const toDeptDraft = (list) => list.map((d) => ({ key: d.id, id: d.id, name: d.name }));
+  const [dDraft, setDDraft] = useState(() => toDeptDraft(departments));
   const [newDept, setNewDept] = useState("");
-  useEffect(() => setDDraft(departments), [departments]);
+  const deptSig = JSON.stringify(departments.map((d) => [d.id, d.name]));
+  useEffect(() => setDDraft(toDeptDraft(departments)), [deptSig]);
   const maxDepts = plan?.max_departments ?? null;
   const atLimit = maxDepts != null && dDraft.length >= maxDepts;
-  const dDirty = JSON.stringify(dDraft) !== JSON.stringify(departments);
+  const dDirty = JSON.stringify(dDraft.map((d) => [d.id || null, d.name])) !== JSON.stringify(departments.map((d) => [d.id, d.name]));
 
   // ----- approval chain -----
-  const [sDraft, setSDraft] = useState(stages.map((s) => s.name));
+  const toStageDraft = (list) => list.map((s) => ({ key: `s${s.position}`, name: s.name }));
+  const [sDraft, setSDraft] = useState(() => toStageDraft(stages));
   const [newStage, setNewStage] = useState("");
-  useEffect(() => setSDraft(stages.map((s) => s.name)), [stages]);
-  const sDirty = JSON.stringify(sDraft) !== JSON.stringify(stages.map((s) => s.name));
+  const stageSig = JSON.stringify(stages.map((s) => [s.position, s.name]));
+  useEffect(() => setSDraft(toStageDraft(stages)), [stageSig]);
+  const sDirty = JSON.stringify(sDraft.map((s) => s.name)) !== JSON.stringify(stages.map((s) => s.name));
 
   // ----- company profile -----
   const blank = { name: org.name, website: org.website || "", phone: org.phone || "", address: org.address || "", description: org.description || "", employee_range: org.employee_range || "" };
@@ -41,7 +51,7 @@ export default function Settings() {
   }, "Departments saved.");
 
   const saveStages = () => run(async () => {
-    await rpc("save_approval_stages", { p_org: org.id, p_names: sDraft });
+    await rpc("save_approval_stages", { p_org: org.id, p_names: sDraft.map((s) => s.name) });
     await reloadCore();
   }, "Approval chain saved.");
 
@@ -70,14 +80,14 @@ export default function Settings() {
 
   const addDept = () => {
     const n = newDept.trim();
-    if (!n || atLimit || dDraft.some((d) => d.name.toLowerCase() === n.toLowerCase())) return;
-    setDDraft([...dDraft, { name: n }]);
+    if (!n || atLimit || dDraft.some((d) => d.name.trim().toLowerCase() === n.toLowerCase())) return;
+    setDDraft([...dDraft, { key: newKey(), name: n }]);
     setNewDept("");
   };
   const addStage = () => {
     const n = newStage.trim();
-    if (!n || sDraft.length >= MAX_STAGES || sDraft.some((s) => s.toLowerCase() === n.toLowerCase())) return;
-    setSDraft([...sDraft, n]);
+    if (!n || sDraft.length >= MAX_STAGES || sDraft.some((s) => s.name.trim().toLowerCase() === n.toLowerCase())) return;
+    setSDraft([...sDraft, { key: newKey(), name: n }]);
     setNewStage("");
   };
 
@@ -104,10 +114,10 @@ export default function Settings() {
 
         <Card title="Departments">
           <ul className="space-y-1.5 mb-3">
-            {dDraft.map((d, i) => (
-              <li key={d.id || `new-${i}`} className="flex items-center gap-2">
-                <input className={inputCls} value={d.name} disabled={!isAdmin} onChange={(e) => setDDraft(dDraft.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
-                {isAdmin && <button className="text-xs text-slate-400 px-2" onClick={() => setDDraft(dDraft.filter((_, j) => j !== i))}>Remove</button>}
+            {dDraft.map((d) => (
+              <li key={d.key} className="flex items-center gap-2">
+                <input className={inputCls} value={d.name} disabled={!isAdmin} onChange={(e) => setDDraft(dDraft.map((x) => (x.key === d.key ? { ...x, name: e.target.value } : x)))} />
+                {isAdmin && <button className="text-xs text-slate-400 px-2" onClick={() => setDDraft(dDraft.filter((x) => x.key !== d.key))}>Remove</button>}
               </li>
             ))}
             {dDraft.length === 0 && <li className="text-sm text-slate-400">No departments yet.</li>}
@@ -128,10 +138,10 @@ export default function Settings() {
           <p className="text-xs text-slate-500 mb-3">Agenda items are approved in this order. Rename the stages to match your organization.</p>
           <ol className="space-y-1.5 mb-3">
             {sDraft.map((s, i) => (
-              <li key={i} className="flex items-center gap-2">
+              <li key={s.key} className="flex items-center gap-2">
                 <span className="text-xs text-slate-400 w-4">{i + 1}.</span>
-                <input className={inputCls} value={s} disabled={!isAdmin} onChange={(e) => setSDraft(sDraft.map((x, j) => (j === i ? e.target.value : x)))} />
-                {isAdmin && sDraft.length > 1 && <button className="text-xs text-slate-400 px-2" onClick={() => setSDraft(sDraft.filter((_, j) => j !== i))}>Remove</button>}
+                <input className={inputCls} value={s.name} disabled={!isAdmin} onChange={(e) => setSDraft(sDraft.map((x) => (x.key === s.key ? { ...x, name: e.target.value } : x)))} />
+                {isAdmin && sDraft.length > 1 && <button className="text-xs text-slate-400 px-2" onClick={() => setSDraft(sDraft.filter((x) => x.key !== s.key))}>Remove</button>}
               </li>
             ))}
           </ol>
@@ -141,7 +151,7 @@ export default function Settings() {
                 <input className={inputCls} value={newStage} disabled={sDraft.length >= MAX_STAGES} onChange={(e) => setNewStage(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addStage())} placeholder={sDraft.length >= MAX_STAGES ? `At most ${MAX_STAGES} stages` : "Add a stage"} />
                 <Button kind="soft" onClick={addStage} disabled={!newStage.trim() || sDraft.length >= MAX_STAGES}>Add</Button>
               </div>
-              <Button onClick={saveStages} disabled={busy || !sDirty || sDraft.some((s) => !s.trim())}>Save approval chain</Button>
+              <Button onClick={saveStages} disabled={busy || !sDirty || sDraft.some((s) => !s.name.trim())}>Save approval chain</Button>
               <p className="text-[11px] text-slate-400 mt-2">The number of stages can only change while no agenda item is waiting for approval.</p>
             </>
           )}
