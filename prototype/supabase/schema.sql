@@ -610,3 +610,182 @@ grant execute on function public.create_invite(uuid, int) to authenticated;
 grant execute on function public.join_organization(text) to authenticated;
 grant execute on function public.create_organization(text, text, text, text, text, text, text, text) to authenticated;
 grant execute on function public.save_departments(uuid, text[]) to authenticated;
+
+
+-- =====================================================================
+-- PART 3: meeting intelligence  (transcripts, AI summaries, documents, AI usage limits)
+-- Run the WHOLE file again; every statement is idempotent.
+-- =====================================================================
+
+-- ---------- Plan allowance for live transcription (minutes per month; null = unlimited) ----------
+alter table public.plans add column if not exists transcribe_minutes_per_month int;
+update public.plans set transcribe_minutes_per_month = case id when 'free' then 60 when 'pro' then 1200 else null end;
+
+-- ---------- Transcript + AI summary, one record per meeting ----------
+create table if not exists public.meeting_records (
+  meeting_id uuid primary key,
+  org_id uuid not null,
+  transcript jsonb not null default '[]'::jsonb check (jsonb_typeof(transcript) = 'array' and pg_column_size(transcript) < 3000000),
+  transcript_text text not null default '',          -- English text of the transcript, kept in sync by a trigger (used for AI search)
+  summary jsonb,
+  summary_at timestamptz,
+  updated_by uuid,
+  updated_at timestamptz not null default now(),
+  foreign key (meeting_id, org_id) references public.meetings (id, org_id) on delete cascade
+);
+create index if not exists meeting_records_org_idx on public.meeting_records (org_id, updated_at desc);
+
+create or replace function public.meeting_records_before_write()
+returns trigger language plpgsql as $$
+begin
+  -- only walk the transcript when it is an array; otherwise the CHECK constraint gives the clean error
+  new.transcript_text := case when jsonb_typeof(new.transcript) = 'array' then coalesce((
+    select string_agg(coalesce(e->>'speaker', '') || ': ' || coalesce(nullif(e->>'english', ''), e->>'original', ''), E'\n' order by ord)
+    from jsonb_array_elements(case when jsonb_typeof(new.transcript) = 'array' then new.transcript else '[]'::jsonb end) with ordinality as t(e, ord)
+  ), '') else '' end;
+  new.updated_at := now();
+  new.updated_by := auth.uid();
+  return new;
+end $$;
+drop trigger if exists meeting_records_before_write on public.meeting_records;
+create trigger meeting_records_before_write before insert or update on public.meeting_records
+  for each row execute function public.meeting_records_before_write();
+
+-- ---------- Documents attached to a meeting or to one of its agenda items ----------
+create table if not exists public.documents (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  meeting_id uuid,
+  agenda_item_id uuid,
+  name text not null check (char_length(name) between 1 and 200),
+  mime_type text,
+  size_bytes int check (size_bytes is null or size_bytes between 0 and 10485760),
+  storage_path text not null,
+  extracted_text text,
+  summary text,
+  status text not null default 'uploaded' check (status in ('uploaded', 'indexed', 'failed')),
+  error text,
+  uploaded_by uuid not null default auth.uid(),
+  created_at timestamptz not null default now(),
+  foreign key (meeting_id, org_id) references public.meetings (id, org_id) on delete cascade,
+  foreign key (agenda_item_id, org_id) references public.agenda_items (id, org_id) on delete cascade
+);
+create index if not exists documents_org_idx on public.documents (org_id, created_at desc);
+create index if not exists documents_meeting_idx on public.documents (meeting_id);
+
+-- ---------- AI usage per company per month (written only by consume_ai) ----------
+create table if not exists public.ai_usage (
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  period date not null,
+  queries int not null default 0,
+  transcribe_seconds int not null default 0,
+  primary key (org_id, period)
+);
+
+create or replace function public.ai_usage_status(p_org uuid)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare v_period date := date_trunc('month', now())::date; v_q int := 0; v_s int := 0; v_plan public.plans;
+begin
+  if not public.is_member(p_org) then raise exception 'Not a member of this company.'; end if;
+  select p.* into v_plan from public.organizations o join public.plans p on p.id = o.plan_id where o.id = p_org;
+  select queries, transcribe_seconds into v_q, v_s from public.ai_usage where org_id = p_org and period = v_period;
+  return jsonb_build_object(
+    'period', v_period, 'queries_used', coalesce(v_q, 0), 'queries_limit', v_plan.ai_queries_per_month,
+    'seconds_used', coalesce(v_s, 0),
+    'seconds_limit', case when v_plan.transcribe_minutes_per_month is null then null else v_plan.transcribe_minutes_per_month * 60 end);
+end $$;
+
+-- Called by the server after a successful AI action. Refuses when the plan's monthly allowance is used up.
+create or replace function public.consume_ai(p_org uuid, p_queries int default 0, p_seconds int default 0)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_period date := date_trunc('month', now())::date; v_plan public.plans; v_q int; v_s int; v_slimit int;
+begin
+  if not public.is_member(p_org) then raise exception 'Not a member of this company.'; end if;
+  if p_queries < 0 or p_queries > 10 or p_seconds < 0 or p_seconds > 600 then raise exception 'Invalid usage amount.'; end if;
+  select p.* into v_plan from public.organizations o join public.plans p on p.id = o.plan_id where o.id = p_org;
+  insert into public.ai_usage (org_id, period) values (p_org, v_period) on conflict do nothing;
+  select queries, transcribe_seconds into v_q, v_s from public.ai_usage where org_id = p_org and period = v_period for update;
+  v_slimit := case when v_plan.transcribe_minutes_per_month is null then null else v_plan.transcribe_minutes_per_month * 60 end;
+  if v_plan.ai_queries_per_month is not null and v_q + p_queries > v_plan.ai_queries_per_month then
+    raise exception 'Your plan''s monthly AI limit (% actions) has been reached. Upgrade the plan to continue.', v_plan.ai_queries_per_month;
+  end if;
+  if v_slimit is not null and v_s + p_seconds > v_slimit then
+    raise exception 'Your plan''s monthly transcription limit (% minutes) has been reached. Upgrade the plan to continue.', v_slimit / 60;
+  end if;
+  update public.ai_usage set queries = v_q + p_queries, transcribe_seconds = v_s + p_seconds where org_id = p_org and period = v_period;
+  return public.ai_usage_status(p_org);
+end $$;
+
+-- storage paths look like '<org-uuid>/<file>'; false (not an error) for anything else
+create or replace function public.is_member_of_path_org(p_path text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select case
+    when split_part(p_path, '/', 1) ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      then public.is_member(split_part(p_path, '/', 1)::uuid)
+    else false
+  end;
+$$;
+
+-- ---------- Row Level Security ----------
+alter table public.meeting_records enable row level security;
+alter table public.documents       enable row level security;
+alter table public.ai_usage        enable row level security;
+
+drop policy if exists records_read on public.meeting_records;
+create policy records_read on public.meeting_records for select to authenticated using (public.is_member(org_id));
+drop policy if exists records_insert on public.meeting_records;
+create policy records_insert on public.meeting_records for insert to authenticated with check (public.is_member(org_id));
+drop policy if exists records_update on public.meeting_records;
+create policy records_update on public.meeting_records for update to authenticated
+  using (public.is_member(org_id)) with check (public.is_member(org_id));
+
+drop policy if exists documents_read on public.documents;
+create policy documents_read on public.documents for select to authenticated using (public.is_member(org_id));
+drop policy if exists documents_insert on public.documents;
+create policy documents_insert on public.documents for insert to authenticated
+  with check (public.is_member(org_id) and uploaded_by = auth.uid() and storage_path like org_id::text || '/%');
+drop policy if exists documents_update on public.documents;
+create policy documents_update on public.documents for update to authenticated
+  using (public.is_member(org_id)) with check (public.is_member(org_id));
+drop policy if exists documents_delete on public.documents;
+create policy documents_delete on public.documents for delete to authenticated
+  using (public.is_member(org_id) and (uploaded_by = auth.uid() or public.is_admin(org_id)));
+
+drop policy if exists ai_usage_read on public.ai_usage;
+create policy ai_usage_read on public.ai_usage for select to authenticated using (public.is_member(org_id));
+
+-- ---------- Privileges ----------
+grant select, insert on public.meeting_records to authenticated;
+grant insert (meeting_id, org_id, transcript, summary, summary_at) on public.meeting_records to authenticated;
+grant update (transcript, summary, summary_at) on public.meeting_records to authenticated;
+grant select, delete on public.documents to authenticated;
+grant insert (org_id, meeting_id, agenda_item_id, name, mime_type, size_bytes, storage_path) on public.documents to authenticated;
+grant update (extracted_text, summary, status, error) on public.documents to authenticated;
+grant select on public.ai_usage to authenticated;
+
+revoke execute on function public.ai_usage_status(uuid) from public, anon;
+revoke execute on function public.consume_ai(uuid, int, int) from public, anon;
+grant execute on function public.ai_usage_status(uuid) to authenticated;
+grant execute on function public.consume_ai(uuid, int, int) to authenticated;
+grant execute on function public.is_member_of_path_org(text) to authenticated;
+
+-- ---------- Private document storage (10 MB per file; only these file types) ----------
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types) values (
+  'documents', 'documents', false, 10485760,
+  array['application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/csv', 'application/vnd.ms-excel', 'text/plain', 'text/markdown', 'image/png', 'image/jpeg'])
+on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists documents_obj_select on storage.objects;
+create policy documents_obj_select on storage.objects for select to authenticated
+  using (bucket_id = 'documents' and public.is_member_of_path_org(name));
+drop policy if exists documents_obj_insert on storage.objects;
+create policy documents_obj_insert on storage.objects for insert to authenticated
+  with check (bucket_id = 'documents' and public.is_member_of_path_org(name));
+drop policy if exists documents_obj_delete on storage.objects;
+create policy documents_obj_delete on storage.objects for delete to authenticated
+  using (bucket_id = 'documents' and exists (
+    select 1 from public.documents d where d.storage_path = objects.name and public.is_member(d.org_id)
+      and (d.uploaded_by = auth.uid() or public.is_admin(d.org_id))));

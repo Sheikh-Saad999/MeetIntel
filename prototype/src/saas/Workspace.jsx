@@ -8,20 +8,25 @@ import Agenda from "./Agenda.jsx";
 import Approvals from "./Approvals.jsx";
 import Members from "./Members.jsx";
 import Settings from "./Settings.jsx";
+import MeetingRoom from "./MeetingRoom.jsx";
+import AskAI from "./AskAI.jsx";
 
 const NAV = [
   ["overview", "Overview"],
   ["meetings", "Meetings"],
   ["agenda", "Agenda"],
   ["approvals", "Approvals"],
+  ["ask", "✨ Ask AI"],
   ["members", "Members"],
   ["settings", "Settings"],
 ];
-const PAGES = { overview: Overview, meetings: Meetings, agenda: Agenda, approvals: Approvals, members: Members, settings: Settings };
+const PAGES = { overview: Overview, meetings: Meetings, agenda: Agenda, approvals: Approvals, ask: AskAI, members: Members, settings: Settings, meeting: MeetingRoom };
 
 export default function Workspace({ membership, userId, onChange, onSignOut, onOpenDemo }) {
   const org = membership.organizations;
-  const [page, setPage] = useState("overview");
+  const [view, setView] = useState({ page: "overview", meetingId: null });
+  const goTo = (page, meetingId = null) => setView({ page, meetingId });
+  const page = view.page;
   const [core, setCore] = useState({ departments: [], stages: [], plans: [], sectorName: "", memberCount: null });
 
   const loadCore = useCallback(async () => {
@@ -70,9 +75,9 @@ export default function Workspace({ membership, userId, onChange, onSignOut, onO
               {NAV.map(([id, label]) => (
                 <button
                   key={id}
-                  onClick={() => setPage(id)}
+                  onClick={() => goTo(id)}
                   className="text-left text-sm px-3 py-2 rounded-lg whitespace-nowrap"
-                  style={page === id ? { background: NAVY, color: "#fff", fontWeight: 600 } : { color: "#475569" }}
+                  style={(page === "meeting" ? "meetings" : page) === id ? { background: NAVY, color: "#fff", fontWeight: 600 } : { color: "#475569" }}
                 >
                   {label}
                 </button>
@@ -86,7 +91,7 @@ export default function Workspace({ membership, userId, onChange, onSignOut, onO
           </aside>
 
           <main className="flex-1 min-w-0 px-4 md:px-8 py-6 max-w-5xl">
-            <Page goTo={setPage} />
+            <Page goTo={goTo} meetingId={view.meetingId} key={view.meetingId || page} />
             <div className="md:hidden mt-8 flex gap-2">
               {org.legacy_demo && <Button kind="soft" onClick={onOpenDemo}>Demo workspace</Button>}
               <Button kind="soft" onClick={onSignOut}>Sign out</Button>

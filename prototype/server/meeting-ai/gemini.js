@@ -17,7 +17,7 @@ export function modelChain() {
  *   schema: Gemini responseSchema; the reply is forced to JSON
  * Returns { ok: true, text, model } or { ok: false, status, error, detail }.
  */
-export async function callGemini({ parts, schema, temperature = 0.2 }) {
+export async function callGemini({ parts, schema, temperature = 0.2, maxOutputTokens }) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return { ok: false, status: 500, error: "The AI service is not configured." };
@@ -34,6 +34,7 @@ export async function callGemini({ parts, schema, temperature = 0.2 }) {
           contents: [{ parts }],
           generationConfig: {
             temperature,
+            ...(maxOutputTokens ? { maxOutputTokens } : {}),
             responseMimeType: "application/json",
             responseSchema: schema,
           },

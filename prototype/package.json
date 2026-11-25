@@ -17,9 +17,11 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
+    "exceljs": "^4.4.0",
     "livekit-client": "^2.22.3",
     "livekit-server-sdk": "^2.19.1",
     "lucide-react": "^1.27.0",
+    "mammoth": "^1.13.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   }

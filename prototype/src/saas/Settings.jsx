@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { supabase, uploadLogo, checkLogo } from "./supabase.js";
 import { useWorkspace } from "./context.jsx";
-import { Card, Button, Field, inputCls, useToast, NAVY, limitText } from "./ui.jsx";
+import { Card, Button, Field, inputCls, useToast, NAVY, limitText, UsageMeter } from "./ui.jsx";
+import { useAiUsage } from "./aiClient.js";
 
 const MAX_STAGES = 5;
 
@@ -9,6 +10,7 @@ export default function Settings() {
   const { org, isAdmin, plan, plans, departments, stages, memberCount, reloadCore, reloadOrg } = useWorkspace();
   const { notify, fail } = useToast();
   const [busy, setBusy] = useState(false);
+  const { usage } = useAiUsage(org.id);
 
   // Draft rows carry a stable `key` (never derived from the text being typed), so the input keeps
   // focus while typing. Drafts are reset only when the saved data really changed, so saving one
@@ -100,8 +102,8 @@ export default function Settings() {
           <div className="text-sm text-slate-600 space-y-1 mb-4">
             <div>Departments: <b>{departments.length}</b> / {limitText(maxDepts)}</div>
             <div>Members: <b>{memberCount ?? "…"}</b> / {limitText(plan?.max_members)}</div>
-            <div>AI questions per month: <b>{plan ? (plan.ai_queries_per_month ?? "Custom") : "…"}</b></div>
           </div>
+          <div className="mb-4"><UsageMeter usage={usage} showMinutes /></div>
           {isAdmin && (
             <div className="flex flex-wrap gap-2">
               {plans.map((p) => (

@@ -48,18 +48,13 @@ function clean(parsed) {
     .filter((l) => !isNoise(l.english) && !isNoise(l.original));
 }
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
-  const { audioBase64, mimeType, previousLines } = req.body || {};
-  if (!audioBase64 || typeof audioBase64 !== "string") {
-    return res.status(400).json({ error: "No audio was received." });
-  }
-  if (audioBase64.length > MAX_BASE64_CHARS) {
-    return res.status(413).json({ error: "The audio segment is too large." });
-  }
+/**
+ * Transcribe one audio segment. Returns { ok: true, lines } or { ok: false, status, error, detail }.
+ * Shared by the legacy endpoint and the authenticated workspace endpoint.
+ */
+export async function transcribeSegment({ audioBase64, mimeType, previousLines }) {
+  if (!audioBase64 || typeof audioBase64 !== "string") return { ok: false, status: 400, error: "No audio was received." };
+  if (audioBase64.length > MAX_BASE64_CHARS) return { ok: false, status: 413, error: "The audio segment is too large." };
 
   const context =
     Array.isArray(previousLines) && previousLines.length
@@ -68,27 +63,30 @@ export default async function handler(req, res) {
         )}`
       : "";
 
+  const result = await callGemini({
+    parts: [{ text: PROMPT + context }, { inline_data: { mime_type: mimeType || "audio/wav", data: audioBase64 } }],
+    schema: SCHEMA,
+  });
+  if (!result.ok) return { ok: false, status: result.status, error: result.error, detail: result.detail };
+  let lines;
   try {
-    const result = await callGemini({
-      parts: [
-        { text: PROMPT + context },
-        { inline_data: { mime_type: mimeType || "audio/wav", data: audioBase64 } },
-      ],
-      schema: SCHEMA,
-    });
-    if (!result.ok) {
-      return res.status(result.status).json({ error: result.error, detail: result.detail });
-    }
-    let lines;
-    try {
-      lines = clean(parseJson(result.text));
-    } catch {
-      lines = null;
-    }
-    if (lines === null) {
-      return res.status(502).json({ error: "The transcription response could not be read." });
-    }
-    return res.status(200).json({ lines });
+    lines = clean(parseJson(result.text));
+  } catch {
+    lines = null;
+  }
+  if (lines === null) return { ok: false, status: 502, error: "The transcription response could not be read." };
+  return { ok: true, lines };
+}
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+  const { audioBase64, mimeType, previousLines } = req.body || {};
+  try {
+    const out = await transcribeSegment({ audioBase64, mimeType, previousLines });
+    if (!out.ok) return res.status(out.status).json({ error: out.error, detail: out.detail });
+    return res.status(200).json({ lines: out.lines });
   } catch (err) {
     return res.status(500).json({ error: "Transcription failed.", detail: err.message });
   }

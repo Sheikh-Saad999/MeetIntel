@@ -3,7 +3,7 @@ import { supabase } from "./supabase.js";
 import { useWorkspace } from "./context.jsx";
 import { Card, Button, Chip, Field, inputCls, useToast, StageTracker, fmtDateTime, NAVY } from "./ui.jsx";
 
-export default function Agenda() {
+export default function Agenda({ goTo }) {
   const { org, stages } = useWorkspace();
   const { notify, fail } = useToast();
   const [meetings, setMeetings] = useState(null);
@@ -66,6 +66,7 @@ export default function Agenda() {
                 {meetings.map((m) => <option key={m.id} value={m.id}>{m.title} · {fmtDateTime(m.scheduled_at)}</option>)}
               </select>
             </Field>
+            {meetingId && <button className="text-xs underline text-slate-500 mb-3" onClick={() => goTo("meeting", meetingId)}>Open this meeting's room (transcript, files, AI summary) →</button>}
             <form onSubmit={add}>
               <Field label="New agenda item"><input className={inputCls} required minLength={2} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="What should the meeting decide?" /></Field>
               <Field label="Details (optional)"><textarea className={inputCls} rows={2} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>

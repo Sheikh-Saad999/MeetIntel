@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "./supabase.js";
 import { useWorkspace } from "./context.jsx";
-import { Card, Chip, fmtDateTime, NAVY, limitText } from "./ui.jsx";
+import { Card, Chip, Button, UsageMeter, fmtDateTime, NAVY, limitText } from "./ui.jsx";
+import { useAiUsage } from "./aiClient.js";
 
-const COMING = ["Live Meeting Capture", "AI Transcription", "Minutes & Resolution", "Follow-up Tracker", "Historical Archive", "AI Decision Support"];
+const COMING = ["Follow-up tracker", "Historical archive", "Decision support", "Video meetings"];
 
 export default function Overview({ goTo }) {
   const { org, plan, departments, memberCount, stages } = useWorkspace();
+  const { usage } = useAiUsage(org.id);
   const [upcoming, setUpcoming] = useState(null);
   const [pending, setPending] = useState(null);
 
@@ -50,6 +52,11 @@ export default function Overview({ goTo }) {
               ))}
             </ul>
           )}
+        </Card>
+        <Card title="AI assistant">
+          <p className="text-sm text-slate-600 mb-3">Record or paste a meeting, attach Word, Excel and PDF files, get an AI summary, and ask questions about anything in your records.</p>
+          <UsageMeter usage={usage} showMinutes />
+          <div className="flex gap-2 mt-4"><Button onClick={() => goTo("ask")}>✨ Ask AI</Button><Button kind="soft" onClick={() => goTo("meetings")}>Open a meeting room</Button></div>
         </Card>
         <Card title="Coming to your workspace">
           <div className="flex flex-wrap gap-2">{COMING.map((c) => <Chip key={c}>{c}</Chip>)}</div>

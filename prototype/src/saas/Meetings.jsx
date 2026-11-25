@@ -6,7 +6,7 @@ import { Card, Button, Chip, Field, inputCls, useToast, fmtDateTime, NAVY } from
 const MODES = ["Face-to-face", "Online", "Hybrid"];
 const EMPTY = { title: "", department_id: "", scheduled_at: "", mode: "Face-to-face", chair: "", notes: "" };
 
-export default function Meetings() {
+export default function Meetings({ goTo }) {
   const { org, isAdmin, me, departments } = useWorkspace();
   const { notify, fail } = useToast();
   const [rows, setRows] = useState(null);
@@ -70,9 +70,12 @@ export default function Meetings() {
           {m.status === "cancelled" && <Chip tone="red">Cancelled</Chip>}
         </div>
       </div>
-      {m.status === "scheduled" && (isAdmin || m.created_by === me.userId) && (
-        <button className="text-xs text-slate-400 hover:text-slate-600" onClick={() => cancel(m.id)}>Cancel</button>
-      )}
+      <div className="flex flex-col items-end gap-1.5 shrink-0">
+        <Button kind="soft" onClick={() => goTo("meeting", m.id)}>Open</Button>
+        {m.status === "scheduled" && (isAdmin || m.created_by === me.userId) && (
+          <button className="text-xs text-slate-400 hover:text-slate-600" onClick={() => cancel(m.id)}>Cancel</button>
+        )}
+      </div>
     </li>
   );
 

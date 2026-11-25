@@ -154,3 +154,29 @@ export function fmtDuration(h) {
   if (h < 48) return `${Math.round(h)}h`;
   return `${(h / 24).toFixed(1)}d`;
 }
+
+// Monthly AI allowance of the plan. showMinutes: also show the live-transcription allowance.
+export function UsageMeter({ usage, showMinutes = false }) {
+  if (!usage) return <div className="text-xs text-slate-400">Loading usage…</div>;
+  const Bar = ({ label, used, limit, unit = "" }) => {
+    const pct = limit == null ? 0 : Math.min(100, (used / limit) * 100);
+    const hot = limit != null && pct >= 90;
+    return (
+      <div>
+        <div className="flex justify-between text-[11px] text-slate-500 mb-1">
+          <span>{label}</span>
+          <span style={hot ? { color: "#B23A2E", fontWeight: 600 } : undefined}>{used}{unit} / {limit == null ? "Unlimited" : `${limit}${unit}`}</span>
+        </div>
+        <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${limit == null ? 4 : Math.max(pct, used ? 3 : 0)}%`, background: hot ? "#C0392B" : GOLD }} />
+        </div>
+      </div>
+    );
+  };
+  return (
+    <div className="space-y-2">
+      <Bar label="AI actions this month" used={usage.queries_used} limit={usage.queries_limit} />
+      {showMinutes && <Bar label="Live transcription" used={Math.round(usage.seconds_used / 60)} limit={usage.seconds_limit == null ? null : Math.round(usage.seconds_limit / 60)} unit=" min" />}
+    </div>
+  );
+}
